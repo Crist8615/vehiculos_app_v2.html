@@ -344,4 +344,53 @@
     renderConductorDiario();
   </script>
 </body>
+<!-- ==========================
+     Conexión a Supabase
+==============================-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+<script>
+  // Inicializar cliente Supabase
+  const { createClient } = supabase
+  const supabaseUrl = "https://TU-PROYECTO.supabase.co"   // 👈 pega tu URL
+  const supabaseKey = "TU_API_KEY"                       // 👈 pega tu anon key
+  const db = createClient(supabaseUrl, supabaseKey)
+
+  // Función para guardar mantención
+  async function guardarMantenimiento(patente, marca, modelo, anio, conductor) {
+    const { data, error } = await db
+      .from("vehiculos") // 👈 nombre exacto de tu tabla
+      .insert([{ 
+        patente, 
+        marca, 
+        modelo, 
+        anio: parseInt(anio), 
+        conductor 
+      }])
+
+    if (error) {
+      alert("❌ Error al guardar: " + error.message)
+      console.error(error)
+    } else {
+      alert("✅ Vehículo guardado en la base de datos")
+      console.log(data)
+    }
+  }
+
+  // Vincular formulario con la función
+  document.addEventListener("DOMContentLoaded", () => {
+    const form = document.getElementById("formVehiculo")
+    if (form) {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault()
+        const patente = document.getElementById("patente").value
+        const marca = document.getElementById("marca").value
+        const modelo = document.getElementById("modelo").value
+        const anio = document.getElementById("anio").value
+        const conductor = document.getElementById("conductor").value
+
+        guardarMantenimiento(patente, marca, modelo, anio, conductor)
+      })
+    }
+  })
+</script>
 </html>
