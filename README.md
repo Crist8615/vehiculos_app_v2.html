@@ -31,7 +31,7 @@
       <label class="form-label required">Modelo</label>
       <input id="modelo" name="modelo" class="form-control mb-2" required>
       <label class="form-label required">Año</label>
-      <input id="anio" type="number" name="anio" class="form-control mb-2" min="1980" max="2100" required>
+      <input id="año" type="number" name="año" class="form-control mb-2" min="1980" max="2100" required>
       <label class="form-label">Conductor</label>
       <input id="conductor" name="conductor" class="form-control mb-3">
       <button class="btn btn-primary">Guardar</button>
@@ -97,7 +97,7 @@
         patente: document.getElementById("patente").value,
         marca: document.getElementById("marca").value,
         modelo: document.getElementById("modelo").value,
-        anio: parseInt(document.getElementById("anio").value),
+        año: parseInt(document.getElementById("año").value),
         conductor: document.getElementById("conductor").value
       };
       const { error } = await supabaseClient.from("vehiculos").insert([d]);
@@ -126,7 +126,7 @@
             <td>${v.patente}</td>
             <td>${v.marca}</td>
             <td>${v.modelo}</td>
-            <td>${v.anio}</td>
+            <td>${v.año}</td>
             <td>${v.conductor || ""}</td>
             <td>${v.fecha_registro || ""}</td>
           </tr>
