@@ -58,7 +58,7 @@
   <script>
     // 🔗 Conexión a Supabase
     const SUPABASE_URL = "https://qnufcrywbncbeosfmwgc.supabase.co";
-    const SUPABASE_ANON_KEY = "TU_SUPABASE_ANON_KEY"; // 👈 reemplaza esto con tu Anon Public Key
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFudWZjcnl3Ym5jYmVvc2Ztd2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczNzU4MDEsImV4cCI6MjA3Mjk1MTgwMX0.Ag37eDgN-88h1uvTln9V40CPKSkZvyBF5j-u0EM46mM"; 
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const statusEl = document.getElementById('supabaseStatus');
