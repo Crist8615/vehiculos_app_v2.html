@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="es">
+<html
+  <!-- Indicador de conexión a Supabase -->
+<span id="supabaseStatus" class="badge bg-secondary ms-2">Conexión: comprobando...</span>
+<button id="btnTestSupabase" type="button" class="btn btn-sm btn-outline-secondary ms-2">Probar conexión</button>lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -344,6 +347,68 @@
     renderConductorDiario();
   </script>
 </body>
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  const SUPABASE_URL = "https://qnufcrywbncbeosfmwgc.supabase.co";
+  const SUPABASE_ANON_KEY = "REEMPLAZA_CON_TU_ANON_KEY"; // copia tu anon key aquí
+  const { createClient } = supabase;
+  const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const statusEl = document.getElementById('supabaseStatus');
+  const btnTest = document.getElementById('btnTestSupabase');
+
+  function setStatus(text, cls) {
+    if(!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.className = 'badge ms-2 ' + cls;
+  }
+
+  async function testConnection() {
+    try {
+      const { data, error } = await supabaseClient.from('vehiculos').select('patente').limit(1);
+      if (error) {
+        console.error(error);
+        setStatus("Conexión ✕", "bg-danger");
+      } else {
+        setStatus("Conexión ✓", "bg-success");
+      }
+    } catch (e) {
+      console.error(e);
+      setStatus("Conexión ✕", "bg-danger");
+    }
+  }
+
+  if (btnTest) {
+    btnTest.addEventListener('click', testConnection);
+  }
+
+  document.addEventListener('DOMContentLoaded', testConnection);
+
+  // --- Guardar vehículo ---
+  const formVehiculo = document.getElementById('formVehiculo');
+  if (formVehiculo) {
+    formVehiculo.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const d = Object.fromEntries(new FormData(formVehiculo).entries());
+      d.anio = Number(d.anio || 0);
+      try {
+        const { error } = await supabaseClient.from('vehiculos').insert([d]);
+        if (error) {
+          console.error(error);
+          alert("Error al guardar: " + error.message);
+        } else {
+          alert("Vehículo guardado en Supabase ✅");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Error de conexión: " + err);
+      }
+    });
+  }
+})();
+</script>
 <!-- ==========================
      Conexión a Supabase
 ==============================-->
