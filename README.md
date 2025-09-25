@@ -4,7 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DSPC · Gestión de Flota (v2)</title>
+
+  <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
   <style>
     body { background:#f4f6f8; }
     header {
@@ -16,12 +19,12 @@
       position: relative;
     }
     header h1 { background:rgba(0,0,0,0.45); padding:10px 18px; border-radius:10px; margin:0; }
-    /* status en header (arriba-derecha) */
     .header-status { position:absolute; top:12px; right:16px; display:flex; gap:8px; align-items:center; }
     .nav-tabs .nav-link.active{ background:#800040;color:#fff;border-color:#800040;}
     .card{ border-radius:12px; }
     .thumb{ width:70px;height:50px;object-fit:cover;border-radius:6px;border:1px solid #ddd }
     .small-muted{ font-size:.9rem;color:#6b6f76 }
+    .required::after{ content: " *"; color: red; }
   </style>
 </head>
 <body>
@@ -34,7 +37,6 @@
   </header>
 
   <main class="container my-4">
-    <!-- Notificación breve (se muestra al cargar conexión) -->
     <div id="connNoticeArea"></div>
 
     <ul class="nav nav-tabs mb-2" id="mainTabs" role="tablist">
@@ -254,16 +256,18 @@
     </div>
   </main>
 
-  <!-- scripts -->
+  <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <script>
   (function(){
-    // --------- CONFIG (ya con tu clave) ----------
+    // --------- CONFIG (tu proyecto + anonym key) ----------
     const SUPABASE_URL = "https://qnufcrywbncbeosfmwgc.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFudWZjcnl3Ym5jYmVvc2Ztd2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczNzU4MDEsImV4cCI6MjA3Mjk1MTgwMX0.Ag37eDgN-88h1uvTln9V40CPKSkZvyBF5j-u0EM46mM";
+
+    // crea el cliente supabase (la librería ya está cargada arriba)
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // --------- UI refs ----------
@@ -278,7 +282,7 @@
     const tbodyConductores = document.getElementById('tbodyConductores');
     const tbodyConductorDiario = document.getElementById('tbodyConductorDiario');
 
-    // helpers
+    // ---------- helpers ----------
     function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
     function setStatus(ok, text){
       if(ok){ statusEl.textContent = text || "Conexión ✓"; statusEl.className = "badge bg-success"; }
@@ -289,155 +293,241 @@
       setTimeout(()=>{ connNoticeArea.innerHTML=''; }, 4500);
     }
 
-    // Test conexión
+    // safeSelect: intenta hacer select con order('id') y si falla sin order
+    async function safeSelect(table, selectStr='*', orderCol='id', opts={limit: null, orderAsc:true}) {
+      try {
+        let q = supabase.from(table).select(selectStr);
+        if(opts.limit) q = q.limit(opts.limit);
+        // intenta ordenar por orderCol (si existe)
+        q = q.order(orderCol, { ascending: !!opts.orderAsc });
+        const res = await q;
+        if(res.error) {
+          // si error por columna no existente o tabla, intenta sin order
+          console.warn(`safeSelect: error con order(${orderCol}) en ${table}:`, res.error.message);
+          const res2 = await supabase.from(table).select(selectStr).limit(opts.limit || undefined);
+          return res2;
+        }
+        return res;
+      } catch(err) {
+        console.error('safeSelect exception', err);
+        try {
+          const res = await supabase.from(table).select(selectStr).limit(opts.limit || undefined);
+          return res;
+        } catch(err2) {
+          console.error('safeSelect fallback exception', err2);
+          return { data: null, error: err2 };
+        }
+      }
+    }
+
+    // --------- Test conexión (diagnósticos claros) ----------
     async function testConnection(){
       try {
-        const { data, error } = await supabase.from('vehiculos').select('id').limit(1);
-        if(error){ console.error(error); setStatus(false); showConnNotice(false, 'Sin conexión a Supabase'); return false; }
-        setStatus(true); showConnNotice(true, 'Conectado a Supabase ✅'); return true;
-      } catch(e){ console.error(e); setStatus(false); showConnNotice(false, 'Sin conexión a Supabase'); return false; }
+        // Prueba básica: SELECT 1 row
+        const { data, error } = await safeSelect('vehiculos','id', 'id', { limit: 1 });
+        if(error){
+          console.error('testConnection error:', error);
+          // inspect known errors
+          const msg = (error.message || '').toLowerCase();
+          if(msg.includes('could not find the table')) {
+            setStatus(false, 'Conexión ✕');
+            showConnNotice(false, "Tabla 'vehiculos' no encontrada en Supabase. Revisa nombre/tabla.");
+          } else if(msg.includes('permission') || msg.includes('row level security') || msg.includes('forbidden') || msg.includes('401')) {
+            setStatus(false, 'Conexión ✕');
+            showConnNotice(false, "Permiso denegado. Revisa RLS / policies y tu anon key.");
+          } else if(msg.includes('invalid') || msg.includes('jwt')) {
+            setStatus(false, 'Conexión ✕');
+            showConnNotice(false, "API Key inválida. Reemplaza la anon key en el archivo.");
+          } else {
+            setStatus(false, 'Conexión ✕');
+            showConnNotice(false, "Error al conectar: "+ (error.message || JSON.stringify(error)).slice(0,200));
+          }
+          return false;
+        }
+        setStatus(true, 'Conexión ✓');
+        showConnNotice(true, 'Conectado a Supabase ✅');
+        return true;
+      } catch(e){
+        console.error('testConnection exception', e);
+        setStatus(false, 'Conexión ✕');
+        showConnNotice(false, 'Error de conexión (mira consola).');
+        return false;
+      }
     }
     btnTest?.addEventListener('click', testConnection);
 
-    // Upload helper (bucket 'fotos' - crear bucket público en Supabase)
+    // ---------- Upload helper (storage) ----------
     async function uploadFiles(files, prefix){
       if(!files || files.length===0) return [];
       const urls = [];
       for(let i=0;i<Math.min(files.length,3);i++){
         const file = files[i];
         const filename = `${prefix}/${crypto.randomUUID()}_${file.name.replace(/\s/g,'_')}`;
-        const { error } = await supabase.storage.from('fotos').upload(filename, file, { cacheControl: '3600', upsert: false });
-        if(error){ console.error('upload error', error); continue; }
-        const publicUrl = supabase.storage.from('fotos').getPublicUrl(filename).publicUrl;
-        urls.push(publicUrl);
+        try {
+          const { error: upErr } = await supabase.storage.from('fotos').upload(filename, file, { cacheControl: '3600', upsert: false });
+          if(upErr){ console.error('upload error', upErr); continue; }
+          // obtener URL pública correctamente
+          const { data: urlData, error: urlErr } = await supabase.storage.from('fotos').getPublicUrl(filename);
+          if(urlErr){ console.error('getPublicUrl error', urlErr); continue; }
+          urls.push(urlData.publicUrl);
+        } catch(e){
+          console.error('uploadFiles exception', e);
+        }
       }
       return urls;
     }
 
-    // Fill selects
+    // ---------- Rellenar selects con vehículos y conductores ----------
     async function fillVehiculoSelects(){
-      const { data } = await supabase.from('vehiculos').select('id,patente,marca,modelo').order('id',{ascending:true});
-      const vehList = data || [];
-      const ids = ['mant_vehiculo_id','limp_vehiculo_id','sini_vehiculo_id','cd_vehiculo_id'];
-      ids.forEach(id=>{
-        const sel = document.getElementById(id);
-        if(!sel) return;
-        sel.innerHTML = '<option value="">Seleccione vehículo</option>';
-        vehList.forEach(v => sel.insertAdjacentHTML('beforeend', `<option value="${v.id}">${escapeHtml(v.patente)} - ${escapeHtml(v.marca)} ${escapeHtml(v.modelo)}</option>`));
-      });
-      // conductor diario conductor select
-      const conds = await supabase.from('conductores').select('id,nombre,apellido').order('id',{ascending:true});
-      const cdSel = document.getElementById('cd_conductor_id');
-      if(cdSel){
-        cdSel.innerHTML = '<option value="">Seleccione conductor</option>';
-        (conds.data || []).forEach(c => cdSel.insertAdjacentHTML('beforeend', `<option value="${c.id}">${escapeHtml(c.nombre)} ${escapeHtml(c.apellido||'')}</option>`));
+      try {
+        const { data } = await safeSelect('vehiculos','id,patente,marca,modelo','id',{orderAsc:true});
+        const vehList = data || [];
+        const ids = ['mant_vehiculo_id','limp_vehiculo_id','sini_vehiculo_id','cd_vehiculo_id','cd_vehiculo_id'];
+        ids.forEach(id=>{
+          const sel = document.getElementById(id);
+          if(!sel) return;
+          sel.innerHTML = '<option value="">Seleccione vehículo</option>';
+          vehList.forEach(v => sel.insertAdjacentHTML('beforeend', `<option value="${v.id}">${escapeHtml(v.patente)} - ${escapeHtml(v.marca)} ${escapeHtml(v.modelo)}</option>`));
+        });
+      } catch(e){
+        console.warn('fillVehiculoSelects failed', e);
+        ['mant_vehiculo_id','limp_vehiculo_id','sini_vehiculo_id','cd_vehiculo_id'].forEach(id=>{
+          const sel = document.getElementById(id); if(!sel) return; sel.innerHTML = '<option value="">Seleccione vehículo</option>';
+        });
+      }
+
+      // conductores select
+      try {
+        const { data } = await safeSelect('conductores','id,nombre,apellido','id',{orderAsc:true});
+        const cdSel = document.getElementById('cd_conductor_id');
+        if(cdSel){
+          cdSel.innerHTML = '<option value="">Seleccione conductor</option>';
+          (data || []).forEach(c => cdSel.insertAdjacentHTML('beforeend', `<option value="${c.id}">${escapeHtml(c.nombre)} ${escapeHtml(c.apellido||'')}</option>`));
+        }
+      } catch(e){
+        console.warn('fill conductores failed', e);
+        const cdSel = document.getElementById('cd_conductor_id'); if(cdSel) cdSel.innerHTML = '<option value="">Seleccione conductor</option>';
       }
     }
 
-    // Render tablas
+    // ---------- Render tablas ----------
     async function renderVehiculos(){
-      const { data, error } = await supabase.from('vehiculos').select('id,patente,marca,modelo,anio,km,responsable,fecha_registro').order('id',{ascending:true});
-      if(error){ console.error(error); return; }
-      tbodyVehiculos.innerHTML = '';
-      (data||[]).forEach(v => {
-        tbodyVehiculos.insertAdjacentHTML('beforeend', `<tr>
-          <td>${v.id}</td>
-          <td>${escapeHtml(v.patente)}</td>
-          <td>${escapeHtml(v.marca)}</td>
-          <td>${escapeHtml(v.modelo)}</td>
-          <td>${v.anio||''}</td>
-          <td>${v.km||''}</td>
-          <td>${escapeHtml(v.responsable)||''}</td>
-          <td>${v.fecha_registro||''}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('vehiculos','id,patente,marca,modelo,anio,km,responsable,fecha_registro','id',{orderAsc:true});
+        if(error){ console.error(error); return; }
+        tbodyVehiculos.innerHTML = '';
+        (data||[]).forEach(v => {
+          tbodyVehiculos.insertAdjacentHTML('beforeend', `<tr>
+            <td>${v.id}</td>
+            <td>${escapeHtml(v.patente)}</td>
+            <td>${escapeHtml(v.marca)}</td>
+            <td>${escapeHtml(v.modelo)}</td>
+            <td>${v.anio||''}</td>
+            <td>${v.km||''}</td>
+            <td>${escapeHtml(v.responsable)||''}</td>
+            <td>${v.fecha_registro||''}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderVehiculos error', e); }
     }
 
     async function renderMantenciones(){
-      const { data, error } = await supabase.from('mantenciones').select('id,vehiculo_id,fecha,tipo,kilometraje,costo,observacion').order('fecha',{ascending:false});
-      if(error){ console.error(error); return; }
-      const veh = (await supabase.from('vehiculos').select('id,patente')).data || [];
-      const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
-      tbodyMantenciones.innerHTML = '';
-      (data||[]).forEach(m=>{
-        tbodyMantenciones.insertAdjacentHTML('beforeend', `<tr>
-          <td>${m.id}</td><td>${escapeHtml(vehMap[m.vehiculo_id]||'')}</td><td>${m.fecha||''}</td><td>${escapeHtml(m.tipo||'')}</td><td>${m.kilometraje||''}</td><td>${m.costo||''}</td><td>${escapeHtml(m.observacion||'')}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('mantenciones','id,vehiculo_id,fecha,tipo,kilometraje,costo,observacion','fecha',{orderAsc:false});
+        if(error){ console.error(error); return; }
+        const veh = (await safeSelect('vehiculos','id,patente','id',{orderAsc:true})).data || [];
+        const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
+        tbodyMantenciones.innerHTML = '';
+        (data||[]).forEach(m=>{
+          tbodyMantenciones.insertAdjacentHTML('beforeend', `<tr>
+            <td>${m.id}</td><td>${escapeHtml(vehMap[m.vehiculo_id]||'')}</td><td>${m.fecha||''}</td><td>${escapeHtml(m.tipo||'')}</td><td>${m.kilometraje||''}</td><td>${m.costo||''}</td><td>${escapeHtml(m.observacion||'')}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderMantenciones error', e); }
     }
 
     async function renderLimpiezas(){
-      const { data, error } = await supabase.from('limpiezas').select('*').order('fecha',{ascending:false});
-      if(error){ console.error(error); return; }
-      const veh = (await supabase.from('vehiculos').select('id,patente')).data || [];
-      const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
-      tbodyLimpiezas.innerHTML = '';
-      (data||[]).forEach(r=>{
-        tbodyLimpiezas.insertAdjacentHTML('beforeend', `<tr>
-          <td>${r.id}</td><td>${escapeHtml(vehMap[r.vehiculo_id]||'')}</td><td>${r.fecha||''}</td><td>${escapeHtml(r.observacion||'')}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('limpiezas','*','fecha',{orderAsc:false});
+        if(error){ console.error(error); return; }
+        const veh = (await safeSelect('vehiculos','id,patente','id',{orderAsc:true})).data || [];
+        const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
+        tbodyLimpiezas.innerHTML = '';
+        (data||[]).forEach(r=>{
+          tbodyLimpiezas.insertAdjacentHTML('beforeend', `<tr>
+            <td>${r.id}</td><td>${escapeHtml(vehMap[r.vehiculo_id]||'')}</td><td>${r.fecha||''}</td><td>${escapeHtml(r.observacion||'')}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderLimpiezas error', e); }
     }
 
     async function renderSiniestros(){
-      const { data, error } = await supabase.from('siniestros').select('*').order('fecha',{ascending:false});
-      if(error){ console.error(error); return; }
-      const veh = (await supabase.from('vehiculos').select('id,patente')).data || [];
-      const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
-      tbodySiniestros.innerHTML = '';
-      (data||[]).forEach(s=>{
-        const fotos = (s.fotos||[]).map(u=> `<a href="${u}" target="_blank"><img src="${u}" class="thumb me-1"></a>`).join('');
-        tbodySiniestros.insertAdjacentHTML('beforeend', `<tr>
-          <td>${s.id}</td><td>${escapeHtml(vehMap[s.vehiculo_id]||'')}</td><td>${s.fecha||''}</td><td>${escapeHtml(s.descripcion||'')}</td><td>${fotos}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('siniestros','*','fecha',{orderAsc:false});
+        if(error){ console.error(error); return; }
+        const veh = (await safeSelect('vehiculos','id,patente','id',{orderAsc:true})).data || [];
+        const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
+        tbodySiniestros.innerHTML = '';
+        (data||[]).forEach(s=>{
+          const fotos = (s.fotos||[]).map(u=> `<a href="${u}" target="_blank"><img src="${u}" class="thumb me-1"></a>`).join('');
+          tbodySiniestros.insertAdjacentHTML('beforeend', `<tr>
+            <td>${s.id}</td><td>${escapeHtml(vehMap[s.vehiculo_id]||'')}</td><td>${s.fecha||''}</td><td>${escapeHtml(s.descripcion||'')}</td><td>${fotos}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderSiniestros error', e); }
     }
 
     async function renderConductores(){
-      const { data, error } = await supabase.from('conductores').select('*').order('id',{ascending:true});
-      if(error){ console.error(error); return; }
-      tbodyConductores.innerHTML = '';
-      (data||[]).forEach(c=>{
-        tbodyConductores.insertAdjacentHTML('beforeend', `<tr>
-          <td>${c.id}</td><td>${escapeHtml(c.nombre)}</td><td>${escapeHtml(c.apellido||'')}</td><td>${escapeHtml(c.rut||'')}</td><td>${escapeHtml(c.licencia||'')}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('conductores','*','id',{orderAsc:true});
+        if(error){ console.error(error); return; }
+        tbodyConductores.innerHTML = '';
+        (data||[]).forEach(c=>{
+          tbodyConductores.insertAdjacentHTML('beforeend', `<tr>
+            <td>${c.id}</td><td>${escapeHtml(c.nombre)}</td><td>${escapeHtml(c.apellido||'')}</td><td>${escapeHtml(c.rut||'')}</td><td>${escapeHtml(c.licencia||'')}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderConductores error', e); }
     }
 
     async function renderConductorDiario(){
-      const { data, error } = await supabase.from('conductor_diario').select('*').order('fecha',{ascending:false});
-      if(error){ console.error(error); return; }
-      const veh = (await supabase.from('vehiculos').select('id,patente')).data || [];
-      const cond = (await supabase.from('conductores').select('id,nombre,apellido')).data || [];
-      const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
-      const condMap = {}; cond.forEach(c=> condMap[c.id] = `${c.nombre} ${c.apellido||''}`);
-      tbodyConductorDiario.innerHTML = '';
-      (data||[]).forEach(d=>{
-        const fotos = (d.fotos||[]).map(u=> `<a href="${u}" target="_blank"><img src="${u}" class="thumb me-1"></a>`).join('');
-        tbodyConductorDiario.insertAdjacentHTML('beforeend', `<tr>
-          <td>${d.id}</td><td>${escapeHtml(vehMap[d.vehiculo_id]||'')}</td><td>${escapeHtml(condMap[d.conductor_id]||'')}</td><td>${d.fecha||''}</td><td>${fotos}</td>
-        </tr>`);
-      });
+      try {
+        const { data, error } = await safeSelect('conductor_diario','*','fecha',{orderAsc:false});
+        if(error){ console.error(error); return; }
+        const veh = (await safeSelect('vehiculos','id,patente','id',{orderAsc:true})).data || [];
+        const cond = (await safeSelect('conductores','id,nombre,apellido','id',{orderAsc:true})).data || [];
+        const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
+        const condMap = {}; cond.forEach(c=> condMap[c.id] = `${c.nombre} ${c.apellido||''}`);
+        tbodyConductorDiario.innerHTML = '';
+        (data||[]).forEach(d=>{
+          const fotos = (d.fotos||[]).map(u=> `<a href="${u}" target="_blank"><img src="${u}" class="thumb me-1"></a>`).join('');
+          tbodyConductorDiario.insertAdjacentHTML('beforeend', `<tr>
+            <td>${d.id}</td><td>${escapeHtml(vehMap[d.vehiculo_id]||'')}</td><td>${escapeHtml(condMap[d.conductor_id]||'')}</td><td>${d.fecha||''}</td><td>${fotos}</td>
+          </tr>`);
+        });
+      } catch(e){ console.error('renderConductorDiario error', e); }
     }
 
     // Chart mantenciones
     let chartMant;
     async function renderChartMantenciones(){
-      const { data } = await supabase.from('mantenciones').select('vehiculo_id');
-      const veh = (await supabase.from('vehiculos').select('id,patente')).data || [];
-      const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
-      const counts = {};
-      (data||[]).forEach(m => counts[m.vehiculo_id] = (counts[m.vehiculo_id]||0)+1);
-      const labels = Object.keys(vehMap).map(k => vehMap[k]);
-      const dataset = Object.keys(vehMap).map(k => counts[k]||0);
-      const ctx = document.getElementById('chartMantenciones')?.getContext('2d');
-      if(!ctx) return;
-      if(chartMant) chartMant.destroy();
-      chartMant = new Chart(ctx, {
-        type: 'bar',
-        data: { labels, datasets:[{ label: 'Mantenciones', data: dataset, backgroundColor: '#800040' }]},
-        options: { responsive:true, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } }
-      });
+      try {
+        const { data } = await safeSelect('mantenciones','vehiculo_id','vehiculo_id',{});
+        const veh = (await safeSelect('vehiculos','id,patente','id',{orderAsc:true})).data || [];
+        const vehMap = {}; veh.forEach(v=> vehMap[v.id] = v.patente);
+        const counts = {};
+        (data||[]).forEach(m => counts[m.vehiculo_id] = (counts[m.vehiculo_id]||0)+1);
+        const labels = Object.keys(vehMap).map(k => vehMap[k]);
+        const dataset = Object.keys(vehMap).map(k => counts[k]||0);
+        const ctx = document.getElementById('chartMantenciones')?.getContext('2d');
+        if(!ctx) return;
+        if(chartMant) chartMant.destroy();
+        chartMant = new Chart(ctx, {
+          type: 'bar',
+          data: { labels, datasets:[{ label: 'Mantenciones', data: dataset, backgroundColor: '#800040' }]},
+          options: { responsive:true, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } }
+        });
+      } catch(e){ console.error('renderChartMantenciones error', e); }
     }
 
     // Cargar todo
@@ -452,16 +542,22 @@
       await renderChartMantenciones();
     }
 
-    // Form handlers (verifican conexión antes de insertar)
+    // safeInsert (verifica conexión y devuelve data)
     async function safeInsert(tabla, datos){
-      const ok = await testConnection();
-      if(!ok) { alert('No hay conexión a Supabase. Revisa la API Key o la URL.'); return null; }
-      const { data, error } = await supabase.from(tabla).insert([datos]);
-      if(error){ alert('❌ Error: '+ error.message); console.error(error); return null; }
-      return data;
+      try {
+        const ok = await testConnection();
+        if(!ok) { alert('No hay conexión a Supabase. Revisa la API Key o la URL.'); return null; }
+        const { data, error } = await supabase.from(tabla).insert([datos]);
+        if(error){ alert('❌ Error: '+ error.message); console.error(error); return null; }
+        return data;
+      } catch(e){
+        console.error('safeInsert exception', e);
+        alert('Error al insertar (mira consola).');
+        return null;
+      }
     }
 
-    // Vehículos
+    // ---------- FORM HANDLERS ----------
     document.getElementById('formVehiculo')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const d = {
@@ -476,7 +572,6 @@
       if(res) { alert('✅ Vehículo guardado'); e.target.reset(); await cargarTodo(); }
     });
 
-    // Mantenciones
     document.getElementById('formMantencion')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const d = {
@@ -488,10 +583,9 @@
         observacion: document.getElementById('mant_obs').value || null
       };
       const res = await safeInsert('mantenciones', d);
-      if(res){ alert('✅ Mantención guardada'); e.target.reset(); await cargarMantenciones(); await renderChartMantenciones(); }
+      if(res){ alert('✅ Mantención guardada'); e.target.reset(); await renderMantenciones(); await renderChartMantenciones(); }
     });
 
-    // Limpiezas
     document.getElementById('formLimpieza')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const d = {
@@ -500,10 +594,9 @@
         observacion: document.getElementById('limp_obs').value || null
       };
       const res = await safeInsert('limpiezas', d);
-      if(res){ alert('✅ Limpieza guardada'); e.target.reset(); await cargarLimpiezas(); }
+      if(res){ alert('✅ Limpieza guardada'); e.target.reset(); await renderLimpiezas(); }
     });
 
-    // Siniestros (sube fotos)
     document.getElementById('formSiniestro')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const files = document.getElementById('sini_files').files;
@@ -516,10 +609,9 @@
         fotos: fotos
       };
       const res = await safeInsert('siniestros', d);
-      if(res){ alert('✅ Siniestro guardado'); e.target.reset(); await cargarSiniestros(); }
+      if(res){ alert('✅ Siniestro guardado'); e.target.reset(); await renderSiniestros(); }
     });
 
-    // Conductores
     document.getElementById('formConductor')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const d = {
@@ -529,10 +621,9 @@
         licencia: document.getElementById('cond_licencia').value.trim() || null
       };
       const res = await safeInsert('conductores', d);
-      if(res){ alert('✅ Conductor guardado'); e.target.reset(); await cargarConductores(); await fillVehiculoSelects(); }
+      if(res){ alert('✅ Conductor guardado'); e.target.reset(); await renderConductores(); await fillVehiculoSelects(); }
     });
 
-    // Conductor Diario (sube fotos)
     document.getElementById('formConductorDiario')?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const files = document.getElementById('cd_files').files;
@@ -546,16 +637,17 @@
         fotos: fotos
       };
       const res = await safeInsert('conductor_diario', d);
-      if(res){ alert('✅ Conductor diario guardado'); e.target.reset(); await cargarConductorDiario(); }
+      if(res){ alert('✅ Conductor diario guardado'); e.target.reset(); await renderConductorDiario(); }
     });
 
-    // INIT
+    // INIT on load
     (async ()=>{
       const ok = await testConnection();
-      if(ok) await cargarTodo();
-      else {
-        // intenta cargar selects locales vacíos para evitar errores en la UI
-        fillVehiculoSelects();
+      if(ok) {
+        await cargarTodo();
+      } else {
+        // si no hay conexión, intenta llenar selects vacíos para evitar errores de DOM
+        await fillVehiculoSelects();
       }
     })();
 
